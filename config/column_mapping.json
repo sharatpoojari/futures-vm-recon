@@ -1,0 +1,14 @@
+{
+  "fund_admin": {
+    "account_id": "Portfolio_ID",
+    "trade_date": "TradeDate",
+    "contract_id": "FuturesContract",
+    "variation_margin": "VM_Amount"
+  },
+  "custody": {
+    "account_id": "Account",
+    "trade_date": "Date",
+    "contract_id": "Contract_Symbol",
+    "variation_margin": "Variation_Margin"
+  }
+}

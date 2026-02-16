@@ -1,0 +1,15 @@
+{
+    "transaction_api": {
+        "type": "mock",
+        "description": "Set type to 'live' and provide base_url/api_key when ready for production",
+        "mock_settings": {
+            "enabled": true
+        },
+        "live_settings": {
+            "base_url": "",
+            "api_key": "",
+            "timeout_seconds": 30
+        }
+    },
+    "fee_tolerance": 0.01
+}
