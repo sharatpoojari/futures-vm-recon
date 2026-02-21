@@ -14,39 +14,60 @@ from data_loader import DataLoader
 from reconciler import Reconciler
 from report_generator import ReportGenerator
 from transaction_api import MockTransactionAPI
+from roll_forward_validator import RollForwardValidator
 
 # Page config
 st.set_page_config(
-    page_title="Futures VM Reconciliation",
+    page_title="Futures VM/MV Reconciliation",
     page_icon="📊",
     layout="wide"
 )
 
-st.title("Futures Variation Margin Reconciliation")
+st.title("Futures Variation Margin & Market Value Reconciliation")
 
 # --- Sidebar: Inputs ---
 with st.sidebar:
     st.header("Upload Files")
 
-    fund_admin_file = st.file_uploader(
-        "Fund Administrator CSV",
-        type="csv",
-        key="fund_admin"
-    )
+    recon_mode = st.radio("Mode", ["Single Day", "Multi-Day (Roll-Forward)"])
 
-    custody_file = st.file_uploader(
-        "Custody CSV",
-        type="csv",
-        key="custody"
-    )
+    if recon_mode == "Single Day":
+        fund_admin_file = st.file_uploader(
+            "Fund Administrator CSV",
+            type="csv",
+            key="fund_admin_single"
+        )
 
-    st.divider()
-    st.header("Options")
+        custody_file = st.file_uploader(
+            "Custody CSV",
+            type="csv",
+            key="custody_single"
+        )
 
-    filter_by_date = st.checkbox("Filter by date")
-    recon_date = None
-    if filter_by_date:
-        recon_date = st.date_input("Reconciliation Date", value=date.today())
+        st.divider()
+        st.header("Options")
+
+        filter_by_date = st.checkbox("Filter by date")
+        recon_date = None
+        if filter_by_date:
+            recon_date = st.date_input("Reconciliation Date", value=date.today())
+
+    else:  # Multi-Day mode
+        fund_admin_files = st.file_uploader(
+            "Fund Administrator CSVs (one per day, in date order)",
+            type="csv",
+            key="fund_admin_multi",
+            accept_multiple_files=True
+        )
+
+        custody_files = st.file_uploader(
+            "Custody CSVs (one per day, in date order)",
+            type="csv",
+            key="custody_multi",
+            accept_multiple_files=True
+        )
+
+        recon_date = None
 
     st.divider()
     run_button = st.button("Run Reconciliation", type="primary", use_container_width=True)
@@ -54,35 +75,76 @@ with st.sidebar:
 
 # --- Main Area ---
 if run_button:
-    # Validate uploads
-    if fund_admin_file is None or custody_file is None:
-        st.error("Please upload both Fund Administrator and Custody CSV files.")
-        st.stop()
+    # Validate uploads based on mode
+    if recon_mode == "Single Day":
+        if fund_admin_file is None or custody_file is None:
+            st.error("Please upload both Fund Administrator and Custody CSV files.")
+            st.stop()
+
+        fund_admin_files_list = [fund_admin_file]
+        custody_files_list = [custody_file]
+
+    else:  # Multi-Day
+        if not fund_admin_files or not custody_files:
+            st.error("Please upload Fund Administrator and Custody CSV files for each day.")
+            st.stop()
+
+        if len(fund_admin_files) != len(custody_files):
+            st.error(f"Number of fund admin files ({len(fund_admin_files)}) must match custody files ({len(custody_files)}).")
+            st.stop()
+
+        fund_admin_files_list = fund_admin_files
+        custody_files_list = custody_files
 
     try:
         # Load and normalize data
         loader = DataLoader()
-
-        fund_admin_raw = pd.read_csv(fund_admin_file)
-        custody_raw = pd.read_csv(custody_file)
-
-        fund_admin_df = loader.load_dataframe(fund_admin_raw, 'fund_admin')
-        custody_df = loader.load_dataframe(custody_raw, 'custody')
-
-        # Apply date filter if selected
-        if recon_date is not None:
-            recon_date_ts = pd.Timestamp(recon_date)
-            fund_admin_df = fund_admin_df[fund_admin_df['trade_date'] == recon_date_ts]
-            custody_df = custody_df[custody_df['trade_date'] == recon_date_ts]
-
-            if fund_admin_df.empty and custody_df.empty:
-                st.warning(f"No records found for date {recon_date}.")
-                st.stop()
-
-        # Reconcile
         transaction_api = MockTransactionAPI()
-        reconciler = Reconciler(transaction_api=transaction_api)
-        results = reconciler.reconcile(fund_admin_df, custody_df)
+
+        daily_data = []
+        all_results = []
+
+        for fa_file, cust_file in zip(fund_admin_files_list, custody_files_list):
+            fund_admin_raw = pd.read_csv(fa_file)
+            custody_raw = pd.read_csv(cust_file)
+
+            fund_admin_df = loader.load_dataframe(fund_admin_raw, 'fund_admin')
+            custody_df = loader.load_dataframe(custody_raw, 'custody')
+
+            # Apply date filter if selected (single-day mode only)
+            if recon_date is not None:
+                recon_date_ts = pd.Timestamp(recon_date)
+                fund_admin_df = fund_admin_df[fund_admin_df['trade_date'] == recon_date_ts]
+                custody_df = custody_df[custody_df['trade_date'] == recon_date_ts]
+
+                if fund_admin_df.empty and custody_df.empty:
+                    st.warning(f"No records found for date {recon_date}.")
+                    st.stop()
+
+            # Store for roll-forward validation
+            daily_data.append({'fund_admin': fund_admin_df, 'custody': custody_df})
+
+            # Reconcile this day
+            reconciler = Reconciler(transaction_api=transaction_api)
+            day_results = reconciler.reconcile(fund_admin_df, custody_df)
+            all_results.append(day_results)
+
+        # Merge results if multi-day
+        if len(all_results) == 1:
+            results = all_results[0]
+        else:
+            # Merge across days
+            results = {}
+            for key in all_results[0].keys():
+                frames = [r[key] for r in all_results if key in r and not r[key].empty]
+                results[key] = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+        # Roll-forward validation (multi-day + MV columns)
+        has_mv = DataLoader.has_mv_columns(daily_data[0]['fund_admin'])
+        if len(daily_data) > 1 and has_mv:
+            rf_validator = RollForwardValidator()
+            rf_breaks = rf_validator.validate(daily_data)
+            results['roll_forward_breaks'] = rf_breaks
 
         # Generate Excel report to memory buffer
         report_gen = ReportGenerator()
@@ -101,25 +163,56 @@ if run_button:
         total_cust = matched + cust_only + mismatches
         match_rate = (matched / total_fa * 100) if total_fa > 0 else 0
 
+        # VM breakdown
         mismatches_df = results['amount_mismatches']
         if not mismatches_df.empty and 'status' in mismatches_df.columns:
-            explained = len(mismatches_df[mismatches_df['status'] == 'Explained by Fees'])
-            unexplained = len(mismatches_df[mismatches_df['status'] != 'Explained by Fees'])
+            vm_explained = len(mismatches_df[mismatches_df['status'] == 'Explained by Fees'])
+            vm_unexplained = len(mismatches_df[mismatches_df['status'] != 'Explained by Fees'])
         else:
-            explained = 0
-            unexplained = mismatches
+            vm_explained = 0
+            vm_unexplained = mismatches
 
+        # Display VM metrics
         col1, col2, col3, col4, col5 = st.columns(5)
         col1.metric("Matched", matched)
         col2.metric("Fund Admin Only", fa_only)
         col3.metric("Custody Only", cust_only)
-        col4.metric("Mismatches", mismatches, help=f"Explained: {explained} | Unexplained: {unexplained}")
+        col4.metric("VM Mismatches", mismatches, help=f"Explained: {vm_explained} | Unexplained: {vm_unexplained}")
         col5.metric("Match Rate", f"{match_rate:.1f}%")
 
         if mismatches > 0:
             info_col1, info_col2 = st.columns(2)
-            info_col1.info(f"Explained by Fees: **{explained}**")
-            info_col2.warning(f"Unexplained: **{unexplained}**")
+            info_col1.info(f"VM Explained by Fees: **{vm_explained}**")
+            info_col2.warning(f"VM Unexplained: **{vm_unexplained}**")
+
+        # MV metrics (if present)
+        if 'mv_mismatches' in results:
+            st.subheader("Market Value Reconciliation")
+            mv_df = results['mv_mismatches']
+            mv_total = len(mv_df)
+
+            if not mv_df.empty and 'status' in mv_df.columns:
+                mv_explained = len(mv_df[mv_df['status'] == 'Explained by Fees'])
+                mv_unexplained = mv_total - mv_explained
+            else:
+                mv_explained = 0
+                mv_unexplained = mv_total
+
+            mv_col1, mv_col2, mv_col3 = st.columns(3)
+            mv_col1.metric("MV Mismatches", mv_total)
+            mv_col2.metric("MV Explained by Fees", mv_explained)
+            mv_col3.metric("MV Unexplained", mv_unexplained)
+
+        # Roll-Forward metrics (if present)
+        if 'roll_forward_breaks' in results:
+            st.subheader("Roll-Forward Validation")
+            rf_df = results['roll_forward_breaks']
+            rf_count = len(rf_df)
+
+            if rf_count == 0:
+                st.success(f"✓ All balances validated across {len(daily_data)} days - no roll-forward breaks")
+            else:
+                st.error(f"✗ {rf_count} roll-forward breaks detected")
 
         st.divider()
 
@@ -135,59 +228,108 @@ if run_button:
         st.divider()
 
         # --- Tabbed Data View ---
-        tab1, tab2, tab3, tab4 = st.tabs([
+        tabs = [
             f"Matched ({matched})",
             f"Fund Admin Only ({fa_only})",
             f"Custody Only ({cust_only})",
-            f"Amount Mismatches ({mismatches})"
-        ])
+            f"VM Mismatches ({mismatches})"
+        ]
 
-        with tab1:
+        if 'mv_mismatches' in results:
+            mv_count = len(results['mv_mismatches'])
+            tabs.append(f"MV Mismatches ({mv_count})")
+
+        if 'roll_forward_breaks' in results:
+            rf_count = len(results['roll_forward_breaks'])
+            tabs.append(f"Roll-Forward ({rf_count})")
+
+        all_tabs = st.tabs(tabs)
+        tab_idx = 0
+
+        with all_tabs[tab_idx]:
             if results['matched'].empty:
                 st.info("No matched records.")
             else:
                 st.dataframe(results['matched'], use_container_width=True, hide_index=True)
+        tab_idx += 1
 
-        with tab2:
+        with all_tabs[tab_idx]:
             if results['fund_admin_only'].empty:
                 st.info("No fund admin only records.")
             else:
                 st.dataframe(results['fund_admin_only'], use_container_width=True, hide_index=True)
+        tab_idx += 1
 
-        with tab3:
+        with all_tabs[tab_idx]:
             if results['custody_only'].empty:
                 st.info("No custody only records.")
             else:
                 st.dataframe(results['custody_only'], use_container_width=True, hide_index=True)
+        tab_idx += 1
 
-        with tab4:
+        with all_tabs[tab_idx]:
             if results['amount_mismatches'].empty:
-                st.info("No amount mismatches.")
+                st.info("No VM mismatches.")
             else:
                 st.dataframe(results['amount_mismatches'], use_container_width=True, hide_index=True)
+        tab_idx += 1
+
+        if 'mv_mismatches' in results:
+            with all_tabs[tab_idx]:
+                if results['mv_mismatches'].empty:
+                    st.info("No MV mismatches.")
+                else:
+                    st.dataframe(results['mv_mismatches'], use_container_width=True, hide_index=True)
+            tab_idx += 1
+
+        if 'roll_forward_breaks' in results:
+            with all_tabs[tab_idx]:
+                if results['roll_forward_breaks'].empty:
+                    st.success("No roll-forward breaks - all balances validated.")
+                else:
+                    st.dataframe(results['roll_forward_breaks'], use_container_width=True, hide_index=True)
 
     except ValueError as e:
         st.error(f"Data validation error: {e}")
     except Exception as e:
         st.error(f"Error: {e}")
+        import traceback
+        st.code(traceback.format_exc())
 
 else:
     # Landing state
-    st.info("Upload your Fund Administrator and Custody CSV files in the sidebar, then click **Run Reconciliation**.")
+    st.info("Upload your CSV files in the sidebar, then click **Run Reconciliation**.")
 
     with st.expander("Expected CSV Format"):
         st.markdown("""
-**Fund Administrator CSV** should contain columns:
+**Required Columns:**
+
+**Fund Administrator CSV:**
 - `Portfolio_ID` - Account/portfolio identifier
 - `TradeDate` - Trade date
 - `FuturesContract` - Contract identifier (e.g., ESH26)
 - `VM_Amount` - Variation margin amount
 
-**Custody CSV** should contain columns:
+**Custody CSV:**
 - `Account` - Account identifier
 - `Date` - Trade date
 - `Contract_Symbol` - Contract identifier
 - `Variation_Margin` - Variation margin amount
 
+**Optional Columns (for Market Value reconciliation):**
+
+**Fund Administrator CSV:**
+- `Beginning_MV` - Beginning market value
+- `Ending_MV` - Ending market value
+
+**Custody CSV:**
+- `Begin_Market_Value` - Beginning market value
+- `End_Market_Value` - Ending market value
+
 Column names can be customized in `config/column_mapping.json`.
+
+**Multi-Day Mode:**
+- Upload one file pair per day, in chronological order
+- MV columns are required for roll-forward validation
+- Tool validates ending MV on day N = beginning MV on day N+1
         """)
