@@ -104,9 +104,16 @@ if run_button:
         daily_data = []
         all_results = []
 
+        # Store column info for debugging
+        uploaded_columns = {'fund_admin': [], 'custody': []}
+
         for fa_file, cust_file in zip(fund_admin_files_list, custody_files_list):
             fund_admin_raw = pd.read_csv(fa_file)
             custody_raw = pd.read_csv(cust_file)
+
+            # Store columns for error reporting
+            uploaded_columns['fund_admin'] = list(fund_admin_raw.columns)
+            uploaded_columns['custody'] = list(custody_raw.columns)
 
             fund_admin_df = loader.load_dataframe(fund_admin_raw, 'fund_admin')
             custody_df = loader.load_dataframe(custody_raw, 'custody')
@@ -291,6 +298,40 @@ if run_button:
 
     except ValueError as e:
         st.error(f"Data validation error: {e}")
+
+        # Show column debugging info
+        if "Missing required columns" in str(e):
+            st.warning("**Debugging Information:**")
+
+            if 'uploaded_columns' in locals():
+                if uploaded_columns['fund_admin']:
+                    st.info(f"**Fund Admin CSV columns found:** {uploaded_columns['fund_admin']}")
+                if uploaded_columns['custody']:
+                    st.info(f"**Custody CSV columns found:** {uploaded_columns['custody']}")
+
+            st.markdown("""
+**Expected column names (must match exactly, including case):**
+
+**Fund Admin CSV:**
+- `Portfolio_ID` (not portfolio_id or PortfolioID)
+- `TradeDate`
+- `FuturesContract`
+- `VM_Amount`
+- *(Optional)* `Beginning_MV`, `Ending_MV`
+
+**Custody CSV:**
+- `Account`
+- `Date`
+- `Contract_Symbol`
+- `Variation_Margin`
+- *(Optional)* `Begin_Market_Value`, `End_Market_Value`
+
+**Common issues:**
+- Column names are case-sensitive
+- Remove any leading/trailing spaces in column headers
+- Make sure you're uploading the right file to the right uploader (Fund Admin vs Custody)
+            """)
+
     except Exception as e:
         st.error(f"Error: {e}")
         import traceback
