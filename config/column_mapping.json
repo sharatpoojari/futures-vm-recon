@@ -3,12 +3,16 @@
     "account_id": "Portfolio_ID",
     "trade_date": "TradeDate",
     "contract_id": "FuturesContract",
-    "variation_margin": "VM_Amount"
+    "variation_margin": "VM_Amount",
+    "beginning_market_value": "Beginning_MV",
+    "ending_market_value": "Ending_MV"
   },
   "custody": {
     "account_id": "Account",
     "trade_date": "Date",
     "contract_id": "Contract_Symbol",
-    "variation_margin": "Variation_Margin"
+    "variation_margin": "Variation_Margin",
+    "beginning_market_value": "Begin_Market_Value",
+    "ending_market_value": "End_Market_Value"
   }
 }

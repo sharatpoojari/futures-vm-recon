@@ -78,6 +78,50 @@ class MockTransactionAPI(TransactionAPIBase):
                 fees=3.00,
                 commissions=2.00
             ),
+            # Multi-day MV test data (Day 1: 2026-02-17)
+            "ACC001|2026-02-17|ESH26": FeeCommissionData(
+                account_id="ACC001",
+                trade_date="2026-02-17",
+                contract_id="ESH26",
+                fees=10.00,
+                commissions=5.00
+            ),
+            "ACC001|2026-02-17|NQH26": FeeCommissionData(
+                account_id="ACC001",
+                trade_date="2026-02-17",
+                contract_id="NQH26",
+                fees=5.00,
+                commissions=2.50
+            ),
+            "ACC002|2026-02-17|ESH26": FeeCommissionData(
+                account_id="ACC002",
+                trade_date="2026-02-17",
+                contract_id="ESH26",
+                fees=8.00,
+                commissions=7.00
+            ),
+            # Multi-day MV test data (Day 2: 2026-02-18)
+            "ACC001|2026-02-18|ESH26": FeeCommissionData(
+                account_id="ACC001",
+                trade_date="2026-02-18",
+                contract_id="ESH26",
+                fees=10.00,
+                commissions=5.00
+            ),
+            "ACC001|2026-02-18|NQH26": FeeCommissionData(
+                account_id="ACC001",
+                trade_date="2026-02-18",
+                contract_id="NQH26",
+                fees=5.00,
+                commissions=2.50
+            ),
+            "ACC002|2026-02-18|ESH26": FeeCommissionData(
+                account_id="ACC002",
+                trade_date="2026-02-18",
+                contract_id="ESH26",
+                fees=8.00,
+                commissions=7.00
+            ),
         }
 
     def get_fees_and_commissions(

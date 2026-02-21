@@ -43,6 +43,12 @@ class ReportGenerator:
         self._create_exceptions_sheet(wb, recon_results['custody_only'], 'Custody Only')
         self._create_mismatches_sheet(wb, recon_results['amount_mismatches'])
 
+        # MV and Roll-Forward sheets (only if data is present)
+        if 'mv_mismatches' in recon_results:
+            self._create_mv_mismatches_sheet(wb, recon_results['mv_mismatches'])
+        if 'roll_forward_breaks' in recon_results:
+            self._create_roll_forward_sheet(wb, recon_results['roll_forward_breaks'])
+
         # Save workbook
         wb.save(output_path)
         return output_path
@@ -129,6 +135,57 @@ class ReportGenerator:
         ws[f'B{row}'] = f'{match_rate:.2f}%'
         ws[f'B{row}'].font = Font(bold=True)
 
+        # MV Reconciliation summary
+        if 'mv_mismatches' in recon_results:
+            row += 2
+            ws[f'A{row}'] = 'MARKET VALUE RECONCILIATION'
+            ws[f'A{row}'].font = Font(bold=True, size=12)
+
+            mv_df = recon_results['mv_mismatches']
+            mv_total = len(mv_df)
+
+            if not mv_df.empty and 'status' in mv_df.columns:
+                mv_explained = len(mv_df[mv_df['status'] == 'Explained by Fees'])
+                mv_unexplained = mv_total - mv_explained
+            else:
+                mv_explained = 0
+                mv_unexplained = mv_total
+
+            row += 1
+            ws[f'A{row}'] = 'MV Mismatches (Total)'
+            ws[f'B{row}'] = mv_total
+            if mv_total > 0:
+                ws[f'B{row}'].fill = self.yellow_fill
+
+            row += 1
+            ws[f'A{row}'] = '  - Explained by Fees'
+            ws[f'B{row}'] = mv_explained
+            if mv_explained > 0:
+                ws[f'B{row}'].fill = self.light_blue_fill
+
+            row += 1
+            ws[f'A{row}'] = '  - Unexplained'
+            ws[f'B{row}'] = mv_unexplained
+            if mv_unexplained > 0:
+                ws[f'B{row}'].fill = self.yellow_fill
+
+        # Roll-Forward summary
+        if 'roll_forward_breaks' in recon_results:
+            row += 2
+            ws[f'A{row}'] = 'ROLL-FORWARD VALIDATION'
+            ws[f'A{row}'].font = Font(bold=True, size=12)
+
+            rf_df = recon_results['roll_forward_breaks']
+            rf_count = len(rf_df)
+
+            row += 1
+            ws[f'A{row}'] = 'Roll-Forward Breaks'
+            ws[f'B{row}'] = rf_count
+            if rf_count > 0:
+                ws[f'B{row}'].fill = self.red_fill
+            else:
+                ws[f'B{row}'].fill = self.green_fill
+
         # Adjust column widths
         ws.column_dimensions['A'].width = 35
         ws.column_dimensions['B'].width = 20
@@ -207,6 +264,61 @@ class ReportGenerator:
 
         # Auto-adjust column widths
         self._auto_adjust_columns(ws, mismatches_df)
+
+    def _create_mv_mismatches_sheet(self, wb: Workbook, mv_mismatches_df: pd.DataFrame) -> None:
+        """Create sheet for market value mismatches with conditional coloring"""
+        ws = wb.create_sheet("MV Mismatches")
+
+        if mv_mismatches_df.empty:
+            ws['A1'] = 'No market value mismatches'
+            return
+
+        has_status = 'status' in mv_mismatches_df.columns
+
+        # Write data
+        for r_idx, row in enumerate(dataframe_to_rows(mv_mismatches_df, index=False, header=True), 1):
+            for c_idx, value in enumerate(row, 1):
+                cell = ws.cell(row=r_idx, column=c_idx, value=value)
+
+                # Format header row
+                if r_idx == 1:
+                    self._apply_header_style(ws, r_idx, len(row))
+                # Conditional row coloring based on status
+                elif r_idx > 1:
+                    if has_status:
+                        row_status = mv_mismatches_df.iloc[r_idx - 2]['status']
+                        if row_status == 'Explained by Fees':
+                            cell.fill = self.light_blue_fill
+                        else:
+                            cell.fill = self.yellow_fill
+                    else:
+                        cell.fill = self.yellow_fill
+
+        # Auto-adjust column widths
+        self._auto_adjust_columns(ws, mv_mismatches_df)
+
+    def _create_roll_forward_sheet(self, wb: Workbook, rf_breaks_df: pd.DataFrame) -> None:
+        """Create sheet for roll-forward validation results"""
+        ws = wb.create_sheet("Roll-Forward")
+
+        if rf_breaks_df.empty:
+            ws['A1'] = 'No roll-forward breaks - all balances validated'
+            ws['A1'].fill = self.green_fill
+            return
+
+        # Write data
+        for r_idx, row in enumerate(dataframe_to_rows(rf_breaks_df, index=False, header=True), 1):
+            for c_idx, value in enumerate(row, 1):
+                cell = ws.cell(row=r_idx, column=c_idx, value=value)
+
+                # Format header row
+                if r_idx == 1:
+                    self._apply_header_style(ws, r_idx, len(row))
+                elif r_idx > 1:
+                    cell.fill = self.red_fill
+
+        # Auto-adjust column widths
+        self._auto_adjust_columns(ws, rf_breaks_df)
 
     def _apply_header_style(self, ws, row: int, col_count: int) -> None:
         """Apply header styling to a row"""

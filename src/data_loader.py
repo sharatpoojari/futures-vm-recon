@@ -133,8 +133,19 @@ class DataLoader:
         # Convert variation_margin to float
         df['variation_margin'] = pd.to_numeric(df['variation_margin'], errors='coerce')
 
+        # Convert market value columns to float if present
+        for mv_col in ['beginning_market_value', 'ending_market_value']:
+            if mv_col in df.columns:
+                df[mv_col] = pd.to_numeric(df[mv_col], errors='coerce')
+
         # Remove rows with missing critical data
         df = df.dropna(subset=['account_id', 'trade_date', 'contract_id', 'variation_margin'])
 
         # Add source column for tracking
         return df
+
+    @staticmethod
+    def has_mv_columns(df: pd.DataFrame) -> bool:
+        """Check if DataFrame has market value columns for MV reconciliation"""
+        mv_columns = ['beginning_market_value', 'ending_market_value']
+        return all(col in df.columns for col in mv_columns)
